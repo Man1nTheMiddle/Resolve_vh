@@ -10,25 +10,25 @@ from dns.exception import DNSException
 
 def get_ip(domain):
     """Пытается получить IP (A-запись) для домена.
-    Возвращает кортеж: (ip_or_status, is_failed)"""
+    Возвращает IP-строку или None, если домен не зарезолвился."""
     domain = domain.strip()
     if not domain:
-        return (None, False)
+        return None
 
     try:
         answers = dns.resolver.resolve(domain, 'A')
-        ip = ", ".join([rdata.address for rdata in answers])
-        return (ip, False)
+        # Если адресов несколько — склеиваем через запятую
+        return ", ".join([rdata.address for rdata in answers])
     except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer,
             dns.resolver.Timeout, DNSException):
-        return ("NXDOMAIN/TIMEOUT", True)
+        return None
     except Exception:
-        return ("ERROR", True)
+        return None
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Резолв списка доменов в IP и сохранение результата в Excel.",
+        description="Резолв списка доменов в IP. Успешные — в Excel, неуспешные — в txt.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument(
         "-o", "--output",
         default="result.xlsx",
-        help="Имя выходного Excel-файла"
+        help="Имя выходного Excel-файла (только успешные резолвы)"
     )
     parser.add_argument(
         "-f", "--failed",
@@ -66,29 +66,36 @@ def main():
 
     # 2. Резолвим
     print(f"Начинаю резолв {len(domains)} доменов из '{args.input}'...")
-    results = []
-    failed_domains = []
+    results = []          # только успешные
+    failed_domains = []   # только неуспешные
 
     for d in domains:
-        ip, is_failed = get_ip(d)
+        ip = get_ip(d)
         if ip is None:
-            continue
-        results.append({"Domain": d, "IP": ip})
-        if is_failed:
             failed_domains.append(d)
-        print(f"{d} -> {ip}")
+            print(f"{d} -> НЕ РЕЗОЛВИТСЯ")
+        else:
+            results.append({"Domain": d, "IP": ip})
+            print(f"{d} -> {ip}")
 
-    # 3. Сохраняем Excel
-    df = pd.DataFrame(results)
-    df.to_excel(args.output, index=False)
-    print(f"\nГотово! Результат сохранён в '{args.output}'")
+    # 3. Сохраняем Excel (только успешные)
+    if results:
+        df = pd.DataFrame(results)
+        df.to_excel(args.output, index=False)
+        print(f"\nУспешно зарезолвлено: {len(results)} → '{args.output}'")
+    else:
+        print("\nНет успешно зарезолвленных доменов — Excel-файл не создан.")
+        # Если старый файл остался от прошлого запуска — удаляем
+        if os.path.exists(args.output):
+            os.remove(args.output)
+            print(f"(Удалён старый '{args.output}')")
 
     # 4. Сохраняем неразрезолвленные
     if failed_domains:
         with open(args.failed, 'w') as f:
             for d in failed_domains:
                 f.write(d + "\n")
-        print(f"Не удалось зарезолвить: {len(failed_domains)} доменов → '{args.failed}'")
+        print(f"Не удалось зарезолвить: {len(failed_domains)} → '{args.failed}'")
     else:
         print("Все домены успешно зарезолвлены.")
         if os.path.exists(args.failed):
